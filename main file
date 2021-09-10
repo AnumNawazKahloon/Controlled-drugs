@@ -1,0 +1,295 @@
+//Creating Registration Smart contract
+
+contract Registration {
+    
+    address public CDR; //Ethereum address of the CDR
+    mapping(address => bool) public manufacturer; //a mapping that lists all authorized manufacturers
+    mapping(address => bool) public distributor; //a mapping that lists all authorized distributors
+    mapping(address => bool) public hospital; //a mapping for all authorized hospitals
+    mapping(address => bool) public prescriber; //a mapping for authorized prescribers
+    mapping(address => bool) public nurse; //a mapping for authorized nurses
+    
+    //Registration Events
+    
+    event RegistrationSCDeployer (address indexed CDR); //An event to show the address of the registration SC deployer
+
+    //Modifiers
+    
+    modifier onlyCDR() {
+        require(CDR == msg.sender, "Only the CDR is eligible to run this function");
+        _;
+    }
+    
+    modifier onlyHospital {
+        require(hospital [msg.sender], "Only the hospital is eligible to run this function");
+        _;
+    }
+    
+    //Creating the contract constructor
+
+    constructor() public {
+        
+        CDR = msg.sender;
+        emit RegistrationSCDeployer(CDR);
+
+    }
+    
+    //Registration Functions
+    
+    function manufacturerRegistration (address user) public onlyCDR {
+        require(manufacturer[user] == false, "The user is already registered");
+        manufacturer[user] = true;
+        
+    }
+    
+    function distributorRegistration (address user) public onlyCDR {
+        require(distributor[user] == false, "The user is already registered");
+        distributor[user] = true;
+    }
+    
+    function hospitalRegistration (address user) public onlyCDR {
+        require(hospital[user] == false, "The user is already registered");
+        hospital[user] = true;
+    }
+    
+    function prescriberRegistration (address user) public onlyHospital{
+        require(prescriber[user] == false, "The user is already registered");
+        prescriber[user] = true;
+    }
+    
+    function nurseRegistration (address user) public onlyHospital{
+        require(nurse[user] == false, "The user is already registered");
+        nurse[user] = true;
+    }
+    
+    
+}
+
+//Creating the Supply Chain Smart contract
+
+contract Production{
+    
+    //Declaring variables
+    
+    Registration public regcontract; //used to access variables and functions from the other contract
+    bytes32 public controlleddrugname;
+    bytes32 public lotbarcode; //Unique barcode is generated for each lot (ITF-14 type is assumed here)
+    bytes32 public IPFShash; // A bytes32 variable that contains the hash of the uploadeed image
+    enum  drugSchedule {TypeI, TypeII} //Note that schedules III, IV, V are not included
+    drugSchedule  schedule; // the schedule variable can take either I or II as a value
+    uint  public controlleddrugLots; //The amount of lots manufactured of the controlled drug
+    uint  public controlleddrugQuantity; //The number of controlled drugs within each lot
+    enum  controlleddruglotState  {NotReady, Manufactured, EnRoute, DeliveryEnded, Received, UnPackaged}
+    controlleddruglotState public lotstate; //Refers to the state of the controlled drug container
+    //enum controlleddrugstate {Prescribed, Administered, Disposed}
+    //controlleddrugstate public drugstate; //refers to the state of the controlled drug after unboxing
+    
+    //Events 
+    
+    event ProductionSCDeployer (address indexed _address); //An event to show the address of the Production SC deployer
+    event ControlledDrugManufactured (address indexed _manufacturer, bytes32 _barcode, bytes32 _controlleddrugname, bytes32 IPFShash, bytes32 _schedule, uint _controlleddrugLots, uint _controlleddrugQuantity);
+    event StartDelivery (address indexed distributor); //The start of delivery is emitted by the distributor
+    event EnRoute (address indexed distributor); //Event indicating that the controlled drug lot is being delivered
+    event EndDelivery (address indexed distributor); // Event declaring the end of the delivery process
+    event Reception (address indexed hospital); //Event confirming that the hospital has received the controlled drug lot
+    
+    //Creating Modifiers
+    
+    modifier onlyManufacturer{
+        
+        require(regcontract.manufacturer(msg.sender), "Only the manufacturer is allowed to execute this function");
+        _;
+    }
+    
+    modifier onlyDistributor{
+    
+        require(regcontract.distributor(msg.sender), "Only the distributor is allowed to execute this function");
+        _;
+    }
+    
+    modifier onlyHospital{
+    
+        require(regcontract.hospital(msg.sender), "Only the hospital is allowed to execute this function");
+        _;
+    }
+    
+    //Creating the contract constructor
+
+    constructor(address registrationaddress) public {
+        
+        //regcontract = Registration(registrationaddress); //links both contracts by setting the address of the registration contract
+        //regcontract.CDR();
+        regcontract = Registration(registrationaddress);
+        emit ProductionSCDeployer(msg.sender); 
+
+    }
+    
+    
+
+    
+    //Production contract Functions
+    
+    
+    function CreateControlledDrug(bytes32 _controlleddrugname, bytes32 _barcode, bytes32 _IPFShash, drugSchedule _schedule, uint _controlleddrugLots, uint _controlleddrugQuantity ) public onlyManufacturer{
+    require(lotstate == controlleddruglotState.NotReady, "can't run this function as the controlled drug lot has already been manufactured");
+    lotstate = controlleddruglotState.Manufactured;
+    lotbarcode = _barcode;
+    controlleddrugname = _controlleddrugname;
+    IPFShash = _IPFShash; //The hash can be converted into QR code and displayed on the DApp for easier access 
+    controlleddrugLots = _controlleddrugLots;
+    controlleddrugQuantity = _controlleddrugQuantity;
+    
+    if (_schedule == drugSchedule.TypeI){
+        
+        emit ControlledDrugManufactured(msg.sender, lotbarcode, controlleddrugname, IPFShash, "TypeI" , controlleddrugLots, controlleddrugQuantity );
+    }
+    else if (_schedule == drugSchedule.TypeII) {
+        
+        emit ControlledDrugManufactured(msg.sender,lotbarcode,  controlleddrugname, IPFShash, "TypeII" , controlleddrugLots, controlleddrugQuantity );
+    }
+    }
+    
+    function startDelivery() public onlyDistributor{
+        require(lotstate == controlleddruglotState.Manufactured, "Can't run this function as the controlled drug lot has already been delivered or not yet manufactured");
+        lotstate = controlleddruglotState.EnRoute;
+        emit StartDelivery(msg.sender);
+    }
+    
+    function endDelivery() public onlyDistributor{
+        require(lotstate == controlleddruglotState.EnRoute, "Can't run this function as it has already been received or not out for delivery ");
+        lotstate = controlleddruglotState.DeliveryEnded;
+        emit EndDelivery(msg.sender);
+    }
+    
+    
+    function LotReception() public onlyHospital{
+        require(lotstate == controlleddruglotState.DeliveryEnded, "Can't run this function as it has already been received or still in en route");
+        lotstate = controlleddruglotState.Received;
+        emit Reception(msg.sender);
+    }
+    
+            function stringToBytes32(string memory source) public pure returns (bytes32 result) {
+    bytes memory tempEmptyStringTest = bytes(source);
+    if (tempEmptyStringTest.length == 0) {
+        return 0x0;
+    }
+
+    assembly {
+        result := mload(add(source, 32))
+    }
+}
+    
+        
+
+}
+
+//Creating the Consumption Smart contract
+
+contract Consumption{
+    
+    //Declaring variables
+    
+    Registration regcontract2; 
+    Production schain;
+    
+    address public patientEA; //The Ethereum Address of the patient
+    uint public availableAmount; 
+    uint public prescribedAmount;//The number of controlled drugs dispensed by nurses
+    uint public administeredAmount; 
+    uint public disposedAmount; //The number of unwanted/unused controlled drugs that have been disposedAmount
+    bytes32 public administereddrugImage;
+    bytes32 public disposeddrugImage; 
+    enum controlleddrugstate {NotReady, ReadyForDispensing, Prescribed, Administered, Disposed}
+    controlleddrugstate public drugstate; //refers to the state of the controlled drug after unboxing
+        
+    //Events  
+    
+    event ConsumptionSCDeployer(address indexed _address); //shows the address of the SC deployer
+    event DrugReady(address indexed hospital, uint availableAmount);
+    event DrugPrescribed (address indexed prescriber, address indexed patientEA, uint prescribedAmount);
+    event DrugAdministered(address indexed nurse, address indexed patientEA, uint administeredAmount, bytes32 administereddrugImage);
+    event DrugDisposed(address indexed nurse, uint disposedAmount, bytes32 disposeddrugImage);
+    
+    //Modifiers
+    
+    modifier onlyHospital{
+    
+        require(regcontract2.hospital(msg.sender), "Only the hospital is allowed to execute this function");
+        _;
+    }
+    
+    modifier onlyPrescriber{
+    
+        require(regcontract2.prescriber(msg.sender), "Only the prescriber is allowed to execute this function");
+        _;
+    }
+ 
+     modifier onlyNurse{
+    
+        require(regcontract2.nurse(msg.sender), "Only the nurse is allowed to execute this function");
+        _;
+    }
+       
+    
+    //Constructor 
+    
+    constructor(address registrationaddress, address supplyaddress ) public {
+        
+        regcontract2 = Registration(registrationaddress);
+        schain = Production(supplyaddress);
+        emit ConsumptionSCDeployer(msg.sender); //Should be changed to msg.sender if someone else will deploy the SC other than the CDR
+        
+    }
+    
+    
+
+    //Consumption contract Functions
+    
+    
+    function DrugReadyForDispensing() public onlyHospital{
+        require(drugstate == controlleddrugstate.NotReady, "Other entities have already been made aware of this state of the drug");
+        drugstate = controlleddrugstate.ReadyForDispensing;
+        availableAmount = schain.controlleddrugQuantity();
+        emit DrugReady(msg.sender, availableAmount);
+        
+    }
+    
+    
+    
+    function DrugPrescription(address _patientEA, uint _prescribedAmount) public onlyPrescriber{
+        
+        require(drugstate == controlleddrugstate.ReadyForDispensing , "Can't prescribe controlled drug before it's ready");
+        require(_prescribedAmount <= availableAmount , "The dispensed amount must be less than or equal to the available amount");
+        patientEA = _patientEA;
+        prescribedAmount = _prescribedAmount;
+        drugstate = controlleddrugstate.Prescribed; 
+        availableAmount -= _prescribedAmount;
+        emit DrugPrescribed(msg.sender, patientEA, prescribedAmount);
+    }
+    
+    function DrugAdministration(address _patientEA, uint _administeredAmount, bytes32 _administereddrugImage) public onlyNurse{
+        require(drugstate == controlleddrugstate.Prescribed, "Controlled drugs must be prescribed first before administration");
+        require(_administeredAmount <= availableAmount , "The dispensed amount must be less than or equal to the available amount");
+        patientEA = _patientEA;
+        administeredAmount = _administeredAmount;
+        administereddrugImage = _administereddrugImage; //Administration sheet is uploaded
+        availableAmount -= _administeredAmount; //Decrease available amount as drugs are dispensed
+        drugstate = controlleddrugstate.Administered;
+        emit DrugAdministered(msg.sender, patientEA, administeredAmount, administereddrugImage);
+    }
+    
+    function DrugDisposal(uint _disposedAmount, bytes32 _disposeddrugImage) public onlyNurse{
+        require(drugstate == controlleddrugstate.Administered, "Can't dispose drugs before they have been administired");
+        require(_disposedAmount <= availableAmount , "The dispensed amount must be less than or equal to the available amount");
+        disposeddrugImage = _disposeddrugImage;
+        disposedAmount = _disposedAmount;
+        availableAmount -= _disposedAmount; //Decrease available amount as drugs are diposed
+        drugstate = controlleddrugstate.Disposed;
+        emit DrugDisposed(msg.sender, disposedAmount, disposeddrugImage);
+
+    }
+    
+
+
+        
+}
